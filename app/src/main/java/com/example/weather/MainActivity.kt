@@ -1,43 +1,84 @@
 package com.example.weather
 
-import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.Drawable
+import android.app.Activity
+import android.content.Context
 import android.os.Bundle
 import android.util.Log
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ListView
 import android.widget.Switch
 import android.widget.TextView
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.android.volley.Request
 import com.android.volley.RequestQueue
 import com.android.volley.toolbox.JsonObjectRequest
 import com.android.volley.toolbox.Volley
-import com.example.weather.ui.theme.WeatherTheme
-import com.google.gson.JsonObject
 import org.json.JSONException
-import org.json.JSONObject
 import java.time.Instant
 import java.time.ZoneId
-import java.util.Date
 
 
 class MainActivity : ComponentActivity() {
+    class forecastWeather{
+        var temp = 0.0
+        var feelslike = 0.0
+        var weather = ""
+        var datetime = ""
+        constructor(t: Double, f: Double, w: String, dt: String){
+            temp = t;
+            feelslike = f;
+            weather = w;
+            datetime = dt;
+        }
+    }
+
+    class WeatherAdapter(var appcontext: Context, var layoutResourceId: Int, data: Array<forecastWeather>?) :
+        ArrayAdapter<forecastWeather?>(appcontext, layoutResourceId, data!!) {
+        var data: Array<forecastWeather>? = null
+        init {
+            this.data = data
+        }
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            var row = convertView
+            var holder: WeatherHolder?
+            if (row == null) {
+                val inflater = (appcontext as Activity).layoutInflater
+                row = inflater.inflate(layoutResourceId, parent, false)
+                holder = WeatherHolder()
+                holder.t = row.findViewById<View>(R.id.tempTextView) as TextView
+                holder.w = row.findViewById<View>(R.id.weatherTextView) as TextView
+                holder.dt = row.findViewById<View>(R.id.dateTimeTextView) as TextView
+                row.tag = holder
+            } else {
+                holder = row.tag as WeatherHolder
+            }
+            val weather: forecastWeather = data!![position]
+            holder.t?.text = "Температура: ${weather.temp}\nОщущается: ${weather.feelslike}"
+            holder.w?.text = "Погода: ${weather.weather}"
+            holder.dt?.text = "Дата: ${weather.datetime}"
+            return row!!
+        }
+
+        internal class WeatherHolder {
+            var t: TextView? = null
+            var w: TextView? = null
+            var dt: TextView? = null
+        }
+    }
+
     var city = mutableStateOf("Tomsk")
     var units = mutableStateOf("metric")
-    var testUrl = "https://api.openweathermap.org/data/2.5/weather?q=${city.value}&units=${units.value}&lang=ru&appid=6de0f0fcb5b2951a093ce5729d9b1792"
+    var nowUrl = "https://api.openweathermap.org/data/2.5/weather?q=${city.value}&units=${units.value}&lang=ru&appid=6de0f0fcb5b2951a093ce5729d9b1792"
+    var forecastUrl = "https://api.openweathermap.org/data/2.5/forecast?q=${city.value}&units=${units.value}&lang=ru&appid=6de0f0fcb5b2951a093ce5729d9b1792"
     lateinit var mRequestQueue:RequestQueue
     lateinit var themeSwitch: Switch
     lateinit var cityEditText: EditText
@@ -50,6 +91,7 @@ class MainActivity : ComponentActivity() {
     lateinit var metricCheckBox: CheckBox
     lateinit var imperialCheckBox: CheckBox
     lateinit var whereTextView: TextView
+    lateinit var forecastListView: ListView
     var temp = 0.0
     var feelslike = 0.0
     var windSpeed = 0.0
@@ -61,10 +103,11 @@ class MainActivity : ComponentActivity() {
     var sunrise = ""
     var sunset = ""
     var country = ""
-    private fun getWeather(url: String) {
+    var forecast = Array(40){ forecastWeather(0.0, 0.0, "", "") }
+    private fun getWeather(currenturl: String, forecasturl: String) {
         val request = JsonObjectRequest(
             Request.Method.GET,
-            url, null, { response ->
+            currenturl, null, { response ->
                 try {
                     val weather = response.getJSONArray("weather")
                     val main = response.getJSONObject("main")
@@ -120,6 +163,35 @@ class MainActivity : ComponentActivity() {
             error.printStackTrace()
         }
         mRequestQueue.add(request)
+        val forecastRequest = JsonObjectRequest(
+            Request.Method.GET,
+            forecasturl, null, { response ->
+                try {
+                    val list = response.getJSONArray("list")
+                    forecast = Array(list.length()){ forecastWeather(0.0, 0.0, "", "") }
+                    for (i in 0..< list.length()){
+                        val tempf = list.getJSONObject(i)
+                        val weather = tempf.getJSONArray("weather")
+                        val main = tempf.getJSONObject("main")
+                        val t = main.getDouble("temp")
+                        val f = main.getDouble("feels_like")
+                        val dt = tempf.getString("dt_txt")
+                        var w = ""
+                        for (j in 0..< weather.length()){
+                            val tempw = weather.getJSONObject(j)
+                            w = w + tempw.getString("main") + ", "
+                        }
+                        forecast[i] = forecastWeather(t, f, w, dt)
+                        Log.d("!!!!!!!!!!!!!!!!!", "${forecast[25].temp} ${forecast[25].weather} ${forecast[25].datetime}")
+                    }
+                    setForecast()
+                } catch (e: JSONException) {
+                    e.printStackTrace()
+                }
+            }) { error ->
+            error.printStackTrace()
+        }
+        mRequestQueue.add(forecastRequest)
     }
     private fun setValues() {
         var tempUnit = ""
@@ -146,9 +218,12 @@ class MainActivity : ComponentActivity() {
             else{
                 units.value = "imperial"
             }
-            testUrl = "https://api.openweathermap.org/data/2.5/weather?q=${city.value}&units=${units.value}&lang=ru&appid=6de0f0fcb5b2951a093ce5729d9b1792";
-            getWeather(testUrl);
-            setValues(); }
+            nowUrl = "https://api.openweathermap.org/data/2.5/weather?q=${city.value}&units=${units.value}&lang=ru&appid=6de0f0fcb5b2951a093ce5729d9b1792";
+            forecastUrl = "https://api.openweathermap.org/data/2.5/forecast?q=${city.value}&units=${units.value}&lang=ru&appid=6de0f0fcb5b2951a093ce5729d9b1792"
+            getWeather(nowUrl, forecastUrl);
+            setValues();
+            setForecast();
+        }
         whereTextView.text = "кстати, а где это?\n$country"
         temp = 0.0
         feelslike = 0.0
@@ -161,6 +236,16 @@ class MainActivity : ComponentActivity() {
         sunrise = ""
         sunset = ""
         country = ""
+    }
+    private fun setForecast() {
+        val header = layoutInflater.inflate(R.layout.forecast_list_header, null)
+        forecastListView.adapter = null
+        val adapter = WeatherAdapter(this, R.layout.forecast_list_item, forecast)
+        if (forecastListView.headerViewsCount <= 0){
+            forecastListView.addHeaderView(header)
+        }
+        forecastListView.adapter = adapter
+
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -238,9 +323,11 @@ class MainActivity : ComponentActivity() {
         }
         callbutton = findViewById(R.id.callButton);
         whereTextView = findViewById(R.id.whereTextView);
+        forecastListView = findViewById(R.id.forecastListView);
         mRequestQueue = Volley.newRequestQueue(this);
-        getWeather(testUrl);
+        getWeather(nowUrl, forecastUrl);
         setValues();
+        setForecast();
     }
 }
 
